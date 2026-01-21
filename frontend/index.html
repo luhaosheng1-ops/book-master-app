@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>读书解构大师 | Book Deconstruction Master</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700&display=swap');
+
+        body {
+            font-family: 'Noto Serif SC', serif;
+            background-color: #f4f1ea;
+        }
+
+        .prose {
+            max-width: 800px;
+            margin: 0 auto;
+            line-height: 1.8;
+            color: #2d3436;
+        }
+
+        .upload-area {
+            border: 2px dashed #a29bfe;
+            transition: all 0.3s;
+        }
+
+        .upload-area:hover {
+            background-color: #efedff;
+            border-color: #6c5ce7;
+        }
+
+        .loading-spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #6c5ce7;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body class="p-8">
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-12">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">📘 读书解构大师</h1>
+            <p class="text-gray-500">上传书籍，一键生成深度知识手册</p>
+            <div id="configInfo" class="mt-4 text-xs text-gray-400">正在获取输出目录...</div>
+        </header>
+
+        <div id="dropZone" class="upload-area bg-white rounded-xl p-12 text-center cursor-pointer mb-8">
+            <input type="file" id="fileInput" class="hidden" accept=".pdf,.txt,.epub,.mobi,.azw3">
+            <div id="uploadStatus">
+                <p class="text-lg text-gray-600">将电子书 (PDF/TXT/epub/mobi/azw3) 拖到这里，或点击选择</p>
+                <p class="text-sm text-gray-400 mt-2">支持 Z-Library 下载的各类文档</p>
+            </div>
+        </div>
+
+        <div id="resultArea" class="hidden bg-white shadow-lg rounded-xl p-10 prose shadow-xl">
+            <div class="flex justify-between items-center mb-8 border-b pb-4">
+                <div class="flex flex-col">
+                    <span class="text-sm text-gray-400">解构完成：内容已同步至本地目录</span>
+                    <span id="savePath" class="text-xs text-indigo-400"></span>
+                </div>
+                <div class="space-x-2">
+                    <button id="download-btn"
+                        class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm">📥 下载 MD</button>
+                    <button onclick="window.print()"
+                        class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 text-sm">🖨️ 打印
+                        PDF</button>
+                </div>
+            </div>
+            <div id="content"></div>
+        </div>
+    </div>
+    <div id="result-container" style="display:none;">
+        <h3>解构结果：</h3>
+        <pre id="output-text"></pre>
+        <button id="download-btn" class="btn-success">下载 Markdown 文件</button>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const contentDiv = document.getElementById('content');
+        const resultArea = document.getElementById('resultArea');
+        const configInfo = document.getElementById('configInfo');
+        const resultContainer = document.getElementById('result-container');
+        const downloadBtn = document.getElementById('download-btn');
+
+        // 1. 获取配置信息（体现记忆功能）
+        fetch('http://localhost:8000/config')
+            .then(r => r.json())
+            .then(data => {
+                configInfo.innerText = `当前自动同步目录：${data.current_output_dir}`;
+            })
+            .catch(err => console.error("无法获取配置"));
+
+        dropZone.onclick = () => fileInput.click();
+        fileInput.onchange = (e) => handleUpload(e.target.files[0]);
+
+        async function handleUpload(file) {
+            if (!file) return;
+
+            // 界面反馈
+            document.getElementById('uploadStatus').innerHTML =
+                '<div class="loading-spinner mx-auto mb-4"></div><p>正在深度解构中，请稍候（通常需要30-60秒）...</p>';
+            resultArea.classList.add('hidden');
+            resultContainer.style.display = 'none';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('http://localhost:8000/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const res = await response.json();
+
+                if (response.ok && res.status === 'success') {
+                    // --- 关键修复：所有逻辑都要在拿到 res 之后执行 ---
+
+                    // 1. 渲染 Markdown 到主展示区
+                    const markdownText = res.content || res.data; // 兼容 content 或 data 字段
+
+                    if (markdownText) {
+                        contentDiv.innerHTML = marked.parse(markdownText);
+                        resultArea.classList.remove('hidden');
+                    } else {
+                        console.error("后端返回数据结构不正确:", res);
+                        alert("解构成功但未获取到内容文本");
+                    }
+                    // 2. 显示下载容器并绑定文件名
+                    resultContainer.style.display = 'block';
+                    document.getElementById('output-text').innerText = "已生成 Markdown 文件，点击下方按钮下载。";
+
+                    // 3. 绑定下载按钮 (使用后端返回的 filename)
+                    downloadBtn.onclick = () => {
+                        window.location.href = `http://localhost:8000/download/${encodeURIComponent(res.filename)}`;
+                    };
+
+                    document.getElementById('uploadStatus').innerHTML =
+                        '<p class="text-green-600 font-bold">解构成功！</p><p class="text-sm text-gray-400 mt-2">文件已存入本地，也可点击下方按钮下载</p>';
+
+                    resultArea.scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    throw new Error(res.detail || '解构失败');
+                }
+            } catch (error) {
+                console.error(error);
+                alert('上传失败：' + error.message);
+                document.getElementById('uploadStatus').innerHTML = '<p class="text-red-500">发生错误，请重试</p>';
+            }
+        }
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,8 @@
+.env
+__pycache__/
+temp_*
+output/
+output_notes/
+venv/
+node_modules/
+.DS_Store
