@@ -110,7 +110,27 @@ async def analyze_book(file: UploadFile = File(...)):
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    # 解码前端传来的 URL 编码
+    real_filename = urllib.parse.unquote(filename)
+    
+    # 这里的路径一定要和你保存时的 OUTPUT_DIR 绝对一致
+    output_dir = os.getenv("OUTPUT_DIRECTORY", "/app/output")
+    file_path = os.path.join(output_dir, real_filename)
+    
+    print(f"DEBUG: 正在尝试下载文件: {file_path}") # 增加调试日志
 
+    if os.path.exists(file_path):
+        return FileResponse(
+            path=file_path, 
+            filename=real_filename,
+            # 强制浏览器作为附件下载
+            content_disposition_type="attachment"
+        )
+    else:
+        # 如果找不到，返回 404，这样前端控制台能看到具体报错
+        raise HTTPException(status_code=404, detail=f"File not found at {file_path}")
 # 4. 下载接口
 @app.get("/download/{filename}")
 async def download_file(filename: str):

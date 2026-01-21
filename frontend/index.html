@@ -138,6 +138,11 @@
                     // 1. 渲染 Markdown 到主展示区
                     const markdownText = res.content || res.data; // 兼容 content 或 data 字段
 
+                    // 【新增】保存到本地缓存
+                    localStorage.setItem('last_analysis_content', markdownText);
+                    localStorage.setItem('last_analysis_filename', res.filename);
+
+                    resultArea.classList.remove('hidden');
                     if (markdownText) {
                         contentDiv.innerHTML = marked.parse(markdownText);
                         resultArea.classList.remove('hidden');
@@ -161,6 +166,20 @@
                 } else {
                     throw new Error(res.detail || '解构失败');
                 }
+                // 【新增】在页面加载完成时（script 标签开头），尝试读取缓存：
+                window.onload = () => {
+                    const savedContent = localStorage.getItem('last_analysis_content');
+                    const savedFilename = localStorage.getItem('last_analysis_filename');
+
+                    if (savedContent) {
+                        resultArea.classList.remove('hidden');
+                        contentDiv.innerHTML = marked.parse(savedContent);
+                        // 重新绑定下载按钮
+                        downloadBtn.onclick = () => {
+                            window.location.href = `http://localhost:8000/download/${encodeURIComponent(savedFilename)}`;
+                        };
+                    }
+                };
             } catch (error) {
                 console.error(error);
                 alert('上传失败：' + error.message);
