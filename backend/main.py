@@ -4,7 +4,8 @@ import urllib.parse
 import fitz  # PyMuPDF
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+import json
 from dotenv import load_dotenv
 from ebooklib import epub
 from bs4 import BeautifulSoup
@@ -78,7 +79,7 @@ def extract_text_from_any(file_path):
         print(f"解析出错: {e}")
     return text
 
-# 3. 核心业务接口
+# 3. 核心业务接口 - 流式传输版本
 @app.post("/analyze")
 async def analyze_book(file: UploadFile = File(...)):
     # 保存临时文件
@@ -92,40 +93,65 @@ async def analyze_book(file: UploadFile = File(...)):
         if not book_content.strip():
             raise HTTPException(status_code=400, detail="无法提取内容，请确保文件未加密")
 
-        # 调用 DeepSeek
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"请深度解构以下书籍内容：\n\n{book_content[:18000]}"} # 限制发送长度，防报错
-            ],
-            stream=False
-        )
-        
-        result_text = response.choices[0].message.content
-        
         # 生成唯一文件名
         timestamp = datetime.datetime.now().strftime("%H%M%S")
         safe_filename = f"解构_{os.path.splitext(file.filename)[0]}_{timestamp}.md"
         full_save_path = os.path.join(OUTPUT_DIR, safe_filename)
         
-        # 写入本地保存
-        with open(full_save_path, "w", encoding="utf-8") as f:
-            f.write(result_text)
+        # 流式生成器函数
+        async def generate_stream():
+            accumulated_text = ""
+            try:
+                # 调用 DeepSeek 流式API
+                stream = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": f"请深度解构以下书籍内容：\n\n{book_content[:18000]}"}
+                    ],
+                    stream=True
+                )
+                
+                # 先发送文件名信息
+                yield f"data: {json.dumps({'type': 'filename', 'filename': safe_filename}, ensure_ascii=False)}\n\n"
+                
+                # 流式接收并转发
+                for chunk in stream:
+                    if chunk.choices and len(chunk.choices) > 0:
+                        delta = chunk.choices[0].delta
+                        if hasattr(delta, 'content') and delta.content:
+                            content = delta.content
+                            accumulated_text += content
+                            # 发送内容片段
+                            yield f"data: {json.dumps({'type': 'content', 'chunk': content}, ensure_ascii=False)}\n\n"
+                
+                # 流式传输完成后，保存完整文件
+                with open(full_save_path, "w", encoding="utf-8") as f:
+                    f.write(accumulated_text)
+                
+                # 发送完成信号
+                yield f"data: {json.dumps({'type': 'done', 'filename': safe_filename}, ensure_ascii=False)}\n\n"
+                
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
         
-        # 返回给前端（确保字段名与前端对应）
-        return {
-            "status": "success", 
-            "content": result_text, 
-            "filename": safe_filename,
-            "save_path": full_save_path
-        }
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+        raise HTTPException(status_code=500, detail=str(e))
 @app.get("/download/{filename}")
 async def download_file(filename: str):
     # 解码前端传来的 URL 编码

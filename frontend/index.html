@@ -50,6 +50,60 @@
                 transform: rotate(360deg);
             }
         }
+
+        /* 飞入动画效果 */
+        @keyframes flyIn {
+            0% {
+                opacity: 0;
+                transform: translateY(30px) translateX(-20px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0) translateX(0);
+            }
+        }
+
+        .content-segment {
+            animation: flyIn 0.6s ease-out forwards;
+            opacity: 0;
+            margin-bottom: 1rem;
+        }
+
+        .content-segment h1,
+        .content-segment h2,
+        .content-segment h3,
+        .content-segment h4,
+        .content-segment h5,
+        .content-segment h6 {
+            animation: flyIn 0.8s ease-out forwards;
+            opacity: 0;
+        }
+
+        .content-segment p,
+        .content-segment li,
+        .content-segment ul,
+        .content-segment ol {
+            animation: flyIn 0.5s ease-out forwards;
+            opacity: 0;
+        }
+
+        .typing-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 20px;
+            background-color: #6c5ce7;
+            animation: blink 1s infinite;
+            margin-left: 4px;
+        }
+
+        @keyframes blink {
+            0%, 50% {
+                opacity: 1;
+            }
+            51%, 100% {
+                opacity: 0;
+            }
+        }
     </style>
 </head>
 
@@ -72,24 +126,17 @@
         <div id="resultArea" class="hidden bg-white shadow-lg rounded-xl p-10 prose shadow-xl">
             <div class="flex justify-between items-center mb-8 border-b pb-4">
                 <div class="flex flex-col">
-                    <span class="text-sm text-gray-400">解构完成：内容已同步至本地目录</span>
-                    <span id="savePath" class="text-xs text-indigo-400"></span>
+                    <span id="status-tag" class="text-sm text-gray-400">解构完成</span>
                 </div>
-                <div class="space-x-2">
+                <div class="space-x-2 flex items-center">
+                    <button onclick="clearCache()"
+                        class="bg-red-500 text-white px-3 py-2 rounded hover:bg-red-600 text-xs">🧹 清除</button>
                     <button id="download-btn"
-                        class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm">📥 下载 MD</button>
+                        class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700 text-xs">📥 下载 MD</button>
                     <button onclick="window.print()"
-                        class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 text-sm">🖨️ 打印
+                        class="bg-indigo-600 text-white px-3 py-2 rounded hover:bg-indigo-700 text-xs">🖨️ 打印
                         PDF</button>
                 </div>
-            </div>
-            <div class="space-x-2">
-                <button onclick="clearCache()"
-                    class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">🧹 清除记录</button>
-                <button id="download-btn"
-                    class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm">📥 下载 MD</button>
-                <button onclick="window.print()"
-                    class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 text-sm">🖨️ 打印 PDF</button>
             </div>
             <div id="content"></div>
         </div>
@@ -101,28 +148,16 @@
     </div>
 
     <script>
-        // 页面加载完成后立即执行
-        document.addEventListener('DOMContentLoaded', () => {
-            const savedMD = localStorage.getItem('cached_markdown');
-            const savedFile = localStorage.getItem('cached_filename');
-
-            if (savedMD && savedFile) {
-                console.log("检测到缓存数据，正在恢复页面...");
-
-                // 1. 显示结果区域并渲染内容
-                resultArea.classList.remove('hidden');
-                contentDiv.innerHTML = marked.parse(savedMD);
-
-                // 2. 重新激活下载按钮的功能
-                downloadBtn.onclick = () => {
-                    window.location.href = `http://localhost:8000/download/${encodeURIComponent(savedFile)}`;
+        // 定义一个统一的绑定函数，避免到处写重复逻辑
+        function bindDownload(filename) {
+            const btn = document.getElementById('download-btn');
+            if (btn && filename) {
+                btn.onclick = () => {
+                    window.location.href = `http://localhost:8000/download/${encodeURIComponent(filename)}`;
                 };
-
-                // 3. 更新提示状态（可选）
-                document.getElementById('uploadStatus').innerHTML =
-                    '<p class="text-indigo-500">已从缓存恢复上次的解构结果</p>';
             }
-        });
+        }
+
         const fileInput = document.getElementById('fileInput');
         const dropZone = document.getElementById('dropZone');
         const contentDiv = document.getElementById('content');
@@ -130,6 +165,20 @@
         const configInfo = document.getElementById('configInfo');
         const resultContainer = document.getElementById('result-container');
         const downloadBtn = document.getElementById('download-btn');
+
+        // 页面加载时的恢复逻辑
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedMD = localStorage.getItem('cached_markdown');
+            const savedFile = localStorage.getItem('cached_filename');
+
+            if (savedMD && savedFile) {
+                resultArea.classList.remove('hidden');
+                contentDiv.innerHTML = marked.parse(savedMD);
+                bindDownload(savedFile); // 绑定点击
+                document.getElementById('uploadStatus').innerHTML =
+                    '<p class="text-indigo-500">已从缓存恢复上次的解构结果</p>';
+            }
+        });
 
         // 1. 获取配置信息（体现记忆功能）
         fetch('http://localhost:8000/config')
@@ -160,14 +209,73 @@
             }
         }
 
+        // 将文本按段落分割（按标题、空行等）
+        function splitIntoParagraphs(text) {
+            // 按双换行符分割，保留标题行
+            const segments = [];
+            let currentSegment = '';
+            
+            // 先按行分割
+            const lines = text.split('\n');
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const trimmedLine = line.trim();
+                
+                // 如果是标题（以#开头）或空行，开始新段落
+                if (trimmedLine.startsWith('#') || (trimmedLine === '' && currentSegment.trim() !== '')) {
+                    if (currentSegment.trim()) {
+                        segments.push(currentSegment.trim());
+                        currentSegment = '';
+                    }
+                    if (trimmedLine.startsWith('#')) {
+                        segments.push(trimmedLine);
+                    }
+                } else {
+                    currentSegment += (currentSegment ? '\n' : '') + line;
+                }
+            }
+            
+            // 添加最后一段
+            if (currentSegment.trim()) {
+                segments.push(currentSegment.trim());
+            }
+            
+            return segments.filter(s => s.length > 0);
+        }
+
+        // 渲染单个段落，带飞入动画
+        function renderSegment(segment, index) {
+            return new Promise((resolve) => {
+                setTimeout(() => {
+                    const segmentDiv = document.createElement('div');
+                    segmentDiv.className = 'content-segment';
+                    segmentDiv.style.animationDelay = `${index * 0.1}s`;
+                    
+                    // 解析markdown
+                    segmentDiv.innerHTML = marked.parse(segment);
+                    
+                    contentDiv.appendChild(segmentDiv);
+                    
+                    // 滚动到底部
+                    resultArea.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                    
+                    resolve();
+                }, index * 100); // 每个段落间隔100ms
+            });
+        }
+
         async function handleUpload(file) {
             if (!file) return;
 
             // 界面反馈
             document.getElementById('uploadStatus').innerHTML =
-                '<div class="loading-spinner mx-auto mb-4"></div><p>正在深度解构中，请稍候（通常需要30-60秒）...</p>';
-            resultArea.classList.add('hidden');
+                '<div class="loading-spinner mx-auto mb-4"></div><p>正在深度解构中，AI正在思考...</p>';
+            resultArea.classList.remove('hidden');
             resultContainer.style.display = 'none';
+            
+            // 清空之前的内容
+            contentDiv.innerHTML = '<div class="typing-indicator"></div>';
 
             const formData = new FormData();
             formData.append('file', file);
@@ -178,61 +286,140 @@
                     body: formData
                 });
 
-                const res = await response.json();
-
-                if (response.ok && res.status === 'success') {
-                    // --- 关键修复：所有逻辑都要在拿到 res 之后执行 ---
-
-                    // 1. 渲染 Markdown 到主展示区
-                    const markdownText = res.content || res.data; // 兼容 content 或 data 字段
-                    contentDiv.innerHTML = marked.parse(markdownText);
-                    resultArea.classList.remove('hidden');
-                    // 【新增】保存到本地缓存
-                    localStorage.setItem('last_analysis_content', markdownText);
-                    localStorage.setItem('last_analysis_filename', res.filename);
-
-                    resultArea.classList.remove('hidden');
-                    if (markdownText) {
-                        contentDiv.innerHTML = marked.parse(markdownText);
-                        resultArea.classList.remove('hidden');
-                    } else {
-                        console.error("后端返回数据结构不正确:", res);
-                        alert("解构成功但未获取到内容文本");
-                    }
-                    // 2. 显示下载容器并绑定文件名
-                    resultContainer.style.display = 'block';
-                    document.getElementById('output-text').innerText = "已生成 Markdown 文件，点击下方按钮下载。";
-
-                    // 3. 绑定下载按钮 (使用后端返回的 filename)
-                    downloadBtn.onclick = () => {
-                        window.location.href = `http://localhost:8000/download/${encodeURIComponent(res.filename)}`;
-                    };
-
-                    document.getElementById('uploadStatus').innerHTML =
-                        '<p class="text-green-600 font-bold">解构成功！</p><p class="text-sm text-gray-400 mt-2">文件已存入本地，也可点击下方按钮下载</p>';
-
-                    resultArea.scrollIntoView({ behavior: 'smooth' });
-                } else {
-                    throw new Error(res.detail || '解构失败');
+                if (!response.ok) {
+                    throw new Error('请求失败');
                 }
-                // 【新增】在页面加载完成时（script 标签开头），尝试读取缓存：
-                window.onload = () => {
-                    const savedContent = localStorage.getItem('last_analysis_content');
-                    const savedFilename = localStorage.getItem('last_analysis_filename');
 
-                    if (savedContent) {
-                        resultArea.classList.remove('hidden');
-                        contentDiv.innerHTML = marked.parse(savedContent);
-                        // 重新绑定下载按钮
-                        downloadBtn.onclick = () => {
-                            window.location.href = `http://localhost:8000/download/${encodeURIComponent(savedFilename)}`;
-                        };
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let fullContent = '';
+                let filename = '';
+                let segmentBuffer = '';
+                let segmentIndex = 0;
+
+                // 更新状态
+                document.getElementById('uploadStatus').innerHTML =
+                    '<div class="loading-spinner mx-auto mb-4"></div><p class="text-indigo-500">✨ AI正在逐段生成内容...</p>';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // 保留最后不完整的行
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                
+                                if (data.type === 'filename') {
+                                    filename = data.filename;
+                                } else if (data.type === 'content') {
+                                    fullContent += data.chunk;
+                                    segmentBuffer += data.chunk;
+                                    
+                                    // 智能分割段落：优先按标题、双换行、列表项等分割
+                                    let hasCompleteSegment = false;
+                                    
+                                    // 1. 检查是否有标题（# 开头，前面是换行或开头）
+                                    const titleMatch = segmentBuffer.match(/\n(#{1,6}\s+.+?)(?=\n|$)/);
+                                    if (titleMatch && titleMatch.index > 0) {
+                                        const segment = segmentBuffer.substring(0, titleMatch.index).trim();
+                                        segmentBuffer = segmentBuffer.substring(titleMatch.index);
+                                        
+                                        if (segment) {
+                                            await renderSegment(segment, segmentIndex++);
+                                            hasCompleteSegment = true;
+                                        }
+                                    }
+                                    
+                                    // 2. 检查是否有双换行符（段落分隔）
+                                    if (!hasCompleteSegment && segmentBuffer.includes('\n\n') && segmentBuffer.length > 100) {
+                                        const doubleNewlineIndex = segmentBuffer.lastIndexOf('\n\n');
+                                        const segment = segmentBuffer.substring(0, doubleNewlineIndex + 2).trim();
+                                        segmentBuffer = segmentBuffer.substring(doubleNewlineIndex + 2);
+                                        
+                                        if (segment) {
+                                            await renderSegment(segment, segmentIndex++);
+                                            hasCompleteSegment = true;
+                                        }
+                                    }
+                                    
+                                    // 3. 检查是否有列表项结束（- 或 * 或数字开头的新行）
+                                    if (!hasCompleteSegment && segmentBuffer.length > 150) {
+                                        const listItemMatch = segmentBuffer.match(/\n([-*]\s+|\d+\.\s+)/);
+                                        if (listItemMatch && listItemMatch.index > 50) {
+                                            const segment = segmentBuffer.substring(0, listItemMatch.index).trim();
+                                            segmentBuffer = segmentBuffer.substring(listItemMatch.index);
+                                            
+                                            if (segment) {
+                                                await renderSegment(segment, segmentIndex++);
+                                                hasCompleteSegment = true;
+                                            }
+                                        }
+                                    }
+                                    
+                                    // 4. 如果缓冲区很大但还没有完整段落，在句号处分割
+                                    if (!hasCompleteSegment && segmentBuffer.length > 300) {
+                                        // 找最后一个句号、问号或感叹号
+                                        const lastSentenceEnd = Math.max(
+                                            segmentBuffer.lastIndexOf('。'),
+                                            segmentBuffer.lastIndexOf('！'),
+                                            segmentBuffer.lastIndexOf('？'),
+                                            segmentBuffer.lastIndexOf('.')
+                                        );
+                                        
+                                        if (lastSentenceEnd > 100) {
+                                            const segment = segmentBuffer.substring(0, lastSentenceEnd + 1).trim();
+                                            segmentBuffer = segmentBuffer.substring(lastSentenceEnd + 1);
+                                            
+                                            if (segment) {
+                                                await renderSegment(segment, segmentIndex++);
+                                                hasCompleteSegment = true;
+                                            }
+                                        }
+                                    }
+                                } else if (data.type === 'done') {
+                                    // 渲染剩余的缓冲区内容
+                                    if (segmentBuffer.trim()) {
+                                        await renderSegment(segmentBuffer.trim(), segmentIndex++);
+                                    }
+                                    
+                                    // 保存完整内容到缓存
+                                    localStorage.setItem('cached_markdown', fullContent);
+                                    localStorage.setItem('cached_filename', filename || data.filename);
+                                    
+                                    // 绑定下载按钮
+                                    bindDownload(filename || data.filename);
+                                    
+                                    // 更新状态
+                                    document.getElementById('uploadStatus').innerHTML =
+                                        '<p class="text-green-600 font-bold">✅ 解构完成！</p><p class="text-sm text-gray-400 mt-2">文件已存入本地，也可点击下方按钮下载</p>';
+                                    
+                                    document.getElementById('status-tag').innerText = '解构完成';
+                                } else if (data.type === 'error') {
+                                    throw new Error(data.error);
+                                }
+                            } catch (e) {
+                                console.error('解析SSE数据错误:', e, line);
+                            }
+                        }
                     }
-                };
+                }
+
+                // 确保所有内容都已渲染
+                if (segmentBuffer.trim()) {
+                    await renderSegment(segmentBuffer.trim(), segmentIndex);
+                }
+
             } catch (error) {
                 console.error(error);
                 alert('上传失败：' + error.message);
                 document.getElementById('uploadStatus').innerHTML = '<p class="text-red-500">发生错误，请重试</p>';
+                resultArea.classList.add('hidden');
             }
         }
     </script>
