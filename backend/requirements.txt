@@ -6,3 +6,4 @@ pymupdf
 python-dotenv
 ebooklib
 beautifulsoup4
+httpx

@@ -7,6 +7,7 @@
     <title>读书解构大师 | Book Deconstruction Master</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700&display=swap');
 
@@ -115,6 +116,22 @@
             <div id="configInfo" class="mt-4 text-xs text-gray-400">正在获取输出目录...</div>
         </header>
 
+        <!-- 提示词选择区域 -->
+        <div class="bg-white rounded-xl p-6 mb-6 shadow-md">
+            <label for="promptType" class="block text-sm font-semibold text-gray-700 mb-3">
+                🎯 选择解构模式
+            </label>
+            <select id="promptType" 
+                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-700 bg-white cursor-pointer">
+                <option value="architect">🏗️ 架构师模式 (Architect)</option>
+                <option value="executor">⚡ 执行者模式 (Executor)</option>
+                <option value="disruptor">💥 颠覆者模式 (Disruptor)</option>
+            </select>
+            <div id="promptDesc" class="mt-3 p-4 bg-indigo-50 border-l-4 border-indigo-500 rounded text-sm text-gray-700">
+                <strong>🏗️ 架构师模式（纯理论推导）：</strong><br>✅ 输出：数学公式、逻辑推导、理论框架<br>❌ 禁止：行动建议、操作步骤、实践指南<br>适合：想要深入理解底层逻辑和思维模型的读者
+            </div>
+        </div>
+
         <div id="dropZone" class="upload-area bg-white rounded-xl p-12 text-center cursor-pointer mb-8">
             <input type="file" id="fileInput" class="hidden" accept=".pdf,.txt,.epub,.mobi,.azw3">
             <div id="uploadStatus">
@@ -165,15 +182,59 @@
         const configInfo = document.getElementById('configInfo');
         const resultContainer = document.getElementById('result-container');
         const downloadBtn = document.getElementById('download-btn');
+        const promptTypeSelect = document.getElementById('promptType');
+        const promptDesc = document.getElementById('promptDesc');
+
+        // 提示词描述映射（更新为强调差异的描述）
+        const promptDescriptions = {
+            architect: '<strong>🏗️ 架构师模式（纯理论推导）：</strong><br>✅ 输出：数学公式、逻辑推导、理论框架<br>❌ 禁止：行动建议、操作步骤、实践指南<br>适合：想要深入理解底层逻辑和思维模型的读者',
+            executor: '<strong>⚡ 执行者模式（纯操作指南）：</strong><br>✅ 输出：步骤清单、决策树、检查表<br>❌ 禁止：底层原理、理论解释、为什么<br>适合：想要立即执行和快速应用的读者',
+            disruptor: '<strong>💥 颠覆者模式（认知爆破）：</strong><br>✅ 输出：反常识洞察、深层矛盾、认知陷阱<br>❌ 禁止：平庸总结、常规观点、表面描述<br>适合：想要挑战常规思维和获得颠覆性视角的读者'
+        };
+
+        // 更新提示词描述
+        function updatePromptDescription() {
+            const selectedType = promptTypeSelect.value;
+            promptDesc.innerHTML = promptDescriptions[selectedType];
+            // 保存到 localStorage
+            localStorage.setItem('selected_prompt_type', selectedType);
+        }
+
+        // 提示词选择变化事件
+        promptTypeSelect.addEventListener('change', updatePromptDescription);
 
         // 页面加载时的恢复逻辑
         document.addEventListener('DOMContentLoaded', () => {
+            // 初始化 Mermaid
+            if (typeof mermaid !== 'undefined') {
+                mermaid.initialize({ 
+                    startOnLoad: true,
+                    theme: 'default',
+                    flowchart: {
+                        useMaxWidth: true,
+                        htmlLabels: true
+                    }
+                });
+            }
+
+            // 恢复提示词选择
+            const savedPromptType = localStorage.getItem('selected_prompt_type');
+            if (savedPromptType && promptDescriptions[savedPromptType]) {
+                promptTypeSelect.value = savedPromptType;
+                updatePromptDescription();
+            }
+
+            // 恢复解构结果
             const savedMD = localStorage.getItem('cached_markdown');
             const savedFile = localStorage.getItem('cached_filename');
 
             if (savedMD && savedFile) {
                 resultArea.classList.remove('hidden');
                 contentDiv.innerHTML = marked.parse(savedMD);
+                // 渲染 Mermaid 图表
+                if (typeof mermaid !== 'undefined') {
+                    mermaid.run();
+                }
                 bindDownload(savedFile); // 绑定点击
                 document.getElementById('uploadStatus').innerHTML =
                     '<p class="text-indigo-500">已从缓存恢复上次的解构结果</p>';
@@ -193,9 +254,10 @@
 
         function clearCache() {
             if (confirm("确定要清空当前的解构记录吗？这将删除本地缓存。")) {
-                // 清除本地存储
+                // 清除本地存储（但保留提示词选择）
                 localStorage.removeItem('cached_markdown');
                 localStorage.removeItem('cached_filename');
+                // 注意：不清除 selected_prompt_type，保留用户的选择偏好
 
                 // 隐藏结果区域
                 resultArea.classList.add('hidden');
@@ -244,7 +306,76 @@
             return segments.filter(s => s.length > 0);
         }
 
-        // 渲染单个段落，带飞入动画
+        // 打字机效果函数（优化版：降低解析频率，移除强制滚动）
+        function typeWriter(text, element, speed = 8) {
+            return new Promise((resolve) => {
+                let currentIndex = 0;
+                let currentText = '';
+                let parseCounter = 0;
+                const PARSE_INTERVAL = 5; // 每5个字符解析一次，降低性能消耗
+                
+                // 先清空容器
+                element.innerHTML = '';
+                
+                function typeChar() {
+                    if (currentIndex < text.length) {
+                        // 获取下一个字符
+                        currentText += text[currentIndex];
+                        currentIndex++;
+                        parseCounter++;
+                        
+                        // 性能优化：每增加 PARSE_INTERVAL 个字符才解析一次，或到达末尾
+                        if (parseCounter >= PARSE_INTERVAL || currentIndex >= text.length) {
+                            // 解析并渲染 Markdown
+                            element.innerHTML = marked.parse(currentText);
+                            parseCounter = 0;
+                        }
+                        
+                        // 移除强制滚动，允许用户自由滚动页面
+                        // element.scrollIntoView({ behavior: 'smooth', block: 'end' }); // 已移除
+                        
+                        // 递归调用，继续打字
+                        setTimeout(typeChar, speed);
+                    } else {
+                        // 打字完成：进行最终渲染和 Mermaid 解析
+                        // 确保所有内容都已解析
+                        element.innerHTML = marked.parse(currentText);
+                        
+                        // 智能解析 Mermaid：扫描并渲染页面中的 Mermaid 代码块
+                        if (typeof mermaid !== 'undefined') {
+                            // 等待 DOM 更新完成
+                            setTimeout(() => {
+                                try {
+                                    // Mermaid 会自动识别 <pre class="mermaid"> 或 <code class="language-mermaid">
+                                    // 但 marked.js 默认生成 <pre><code class="language-mermaid">
+                                    // 需要将 code.language-mermaid 转换为 pre.mermaid
+                                    const codeBlocks = element.querySelectorAll('code.language-mermaid');
+                                    codeBlocks.forEach((code) => {
+                                        const pre = code.parentElement;
+                                        if (pre && pre.tagName === 'PRE') {
+                                            pre.className = 'mermaid';
+                                            pre.textContent = code.textContent;
+                                        }
+                                    });
+                                    
+                                    // 执行 Mermaid 渲染
+                                    mermaid.run();
+                                } catch (e) {
+                                    console.warn('Mermaid 渲染失败:', e);
+                                }
+                            }, 100);
+                        }
+                        
+                        resolve();
+                    }
+                }
+                
+                // 开始打字
+                typeChar();
+            });
+        }
+
+        // 渲染单个段落，带飞入动画（保留用于流式传输的逐段显示）
         function renderSegment(segment, index) {
             return new Promise((resolve) => {
                 setTimeout(() => {
@@ -268,9 +399,9 @@
         async function handleUpload(file) {
             if (!file) return;
 
-            // 界面反馈
+            // 界面反馈：上传开始后，设置带有 animate-bounce 动画的加载提示
             document.getElementById('uploadStatus').innerHTML =
-                '<div class="loading-spinner mx-auto mb-4"></div><p>正在深度解构中，AI正在思考...</p>';
+                '<div class="loading-spinner mx-auto mb-4 animate-bounce"></div><p class="animate-pulse">正在深度解构中，AI正在思考...</p>';
             resultArea.classList.remove('hidden');
             resultContainer.style.display = 'none';
             
@@ -280,8 +411,12 @@
             const formData = new FormData();
             formData.append('file', file);
 
+            // 获取选中的提示词类型
+            const selectedPromptType = promptTypeSelect.value;
+
             try {
-                const response = await fetch('http://localhost:8000/analyze', {
+                // 将 prompt_type 作为查询参数传递
+                const response = await fetch(`http://localhost:8000/analyze?prompt_type=${encodeURIComponent(selectedPromptType)}`, {
                     method: 'POST',
                     body: formData
                 });
@@ -295,12 +430,10 @@
                 let buffer = '';
                 let fullContent = '';
                 let filename = '';
-                let segmentBuffer = '';
-                let segmentIndex = 0;
 
-                // 更新状态
+                // 更新状态：流式传输中
                 document.getElementById('uploadStatus').innerHTML =
-                    '<div class="loading-spinner mx-auto mb-4"></div><p class="text-indigo-500">✨ AI正在逐段生成内容...</p>';
+                    '<div class="loading-spinner mx-auto mb-4"></div><p class="text-indigo-500">✨ AI正在生成内容...</p>';
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -318,81 +451,30 @@
                                 if (data.type === 'filename') {
                                     filename = data.filename;
                                 } else if (data.type === 'content') {
+                                    // 累积完整内容，等待流式传输完成后用打字机效果显示
                                     fullContent += data.chunk;
-                                    segmentBuffer += data.chunk;
-                                    
-                                    // 智能分割段落：优先按标题、双换行、列表项等分割
-                                    let hasCompleteSegment = false;
-                                    
-                                    // 1. 检查是否有标题（# 开头，前面是换行或开头）
-                                    const titleMatch = segmentBuffer.match(/\n(#{1,6}\s+.+?)(?=\n|$)/);
-                                    if (titleMatch && titleMatch.index > 0) {
-                                        const segment = segmentBuffer.substring(0, titleMatch.index).trim();
-                                        segmentBuffer = segmentBuffer.substring(titleMatch.index);
-                                        
-                                        if (segment) {
-                                            await renderSegment(segment, segmentIndex++);
-                                            hasCompleteSegment = true;
-                                        }
-                                    }
-                                    
-                                    // 2. 检查是否有双换行符（段落分隔）
-                                    if (!hasCompleteSegment && segmentBuffer.includes('\n\n') && segmentBuffer.length > 100) {
-                                        const doubleNewlineIndex = segmentBuffer.lastIndexOf('\n\n');
-                                        const segment = segmentBuffer.substring(0, doubleNewlineIndex + 2).trim();
-                                        segmentBuffer = segmentBuffer.substring(doubleNewlineIndex + 2);
-                                        
-                                        if (segment) {
-                                            await renderSegment(segment, segmentIndex++);
-                                            hasCompleteSegment = true;
-                                        }
-                                    }
-                                    
-                                    // 3. 检查是否有列表项结束（- 或 * 或数字开头的新行）
-                                    if (!hasCompleteSegment && segmentBuffer.length > 150) {
-                                        const listItemMatch = segmentBuffer.match(/\n([-*]\s+|\d+\.\s+)/);
-                                        if (listItemMatch && listItemMatch.index > 50) {
-                                            const segment = segmentBuffer.substring(0, listItemMatch.index).trim();
-                                            segmentBuffer = segmentBuffer.substring(listItemMatch.index);
-                                            
-                                            if (segment) {
-                                                await renderSegment(segment, segmentIndex++);
-                                                hasCompleteSegment = true;
-                                            }
-                                        }
-                                    }
-                                    
-                                    // 4. 如果缓冲区很大但还没有完整段落，在句号处分割
-                                    if (!hasCompleteSegment && segmentBuffer.length > 300) {
-                                        // 找最后一个句号、问号或感叹号
-                                        const lastSentenceEnd = Math.max(
-                                            segmentBuffer.lastIndexOf('。'),
-                                            segmentBuffer.lastIndexOf('！'),
-                                            segmentBuffer.lastIndexOf('？'),
-                                            segmentBuffer.lastIndexOf('.')
-                                        );
-                                        
-                                        if (lastSentenceEnd > 100) {
-                                            const segment = segmentBuffer.substring(0, lastSentenceEnd + 1).trim();
-                                            segmentBuffer = segmentBuffer.substring(lastSentenceEnd + 1);
-                                            
-                                            if (segment) {
-                                                await renderSegment(segment, segmentIndex++);
-                                                hasCompleteSegment = true;
-                                            }
-                                        }
-                                    }
                                 } else if (data.type === 'done') {
-                                    // 渲染剩余的缓冲区内容
-                                    if (segmentBuffer.trim()) {
-                                        await renderSegment(segmentBuffer.trim(), segmentIndex++);
+                                    // 流式传输完成，开始打字机效果
+                                    // 确保有内容
+                                    if (!fullContent.trim()) {
+                                        throw new Error('未获取到内容');
                                     }
                                     
-                                    // 保存完整内容到缓存
+                                    // 保存完整内容到缓存（在打字机效果开始前保存）
                                     localStorage.setItem('cached_markdown', fullContent);
                                     localStorage.setItem('cached_filename', filename || data.filename);
                                     
-                                    // 绑定下载按钮
+                                    // 更新状态：准备开始打字机效果
+                                    document.getElementById('uploadStatus').innerHTML =
+                                        '<div class="loading-spinner mx-auto mb-4"></div><p class="text-indigo-500">✨ 内容生成完成，正在展示...</p>';
+                                    
+                                    // 清空内容区域，准备打字机效果
+                                    contentDiv.innerHTML = '';
+                                    
+                                    // 使用打字机效果显示完整内容
+                                    await typeWriter(fullContent, contentDiv, 8);
+                                    
+                                    // 绑定下载按钮（确保在打字机完成后绑定）
                                     bindDownload(filename || data.filename);
                                     
                                     // 更新状态
@@ -410,15 +492,19 @@
                     }
                 }
 
-                // 确保所有内容都已渲染
-                if (segmentBuffer.trim()) {
-                    await renderSegment(segmentBuffer.trim(), segmentIndex);
-                }
-
             } catch (error) {
                 console.error(error);
-                alert('上传失败：' + error.message);
-                document.getElementById('uploadStatus').innerHTML = '<p class="text-red-500">发生错误，请重试</p>';
+                
+                // 错误处理：增加 try-catch，若 fetch 失败，在 uploadStatus 中提示
+                let errorMessage = '发生错误，请重试';
+                if (error.message.includes('fetch') || error.message.includes('network') || error.message.includes('timeout')) {
+                    errorMessage = '连接超时，请检查 VPN 或 API 状态';
+                } else if (error.message) {
+                    errorMessage = error.message;
+                }
+                
+                document.getElementById('uploadStatus').innerHTML = 
+                    `<p class="text-red-500 font-bold">❌ ${errorMessage}</p><p class="text-sm text-gray-400 mt-2">请检查网络连接或稍后重试</p>`;
                 resultArea.classList.add('hidden');
             }
         }
