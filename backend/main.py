@@ -28,7 +28,7 @@ if not os.path.exists(OUTPUT_DIR):
 # 2. 优先直连 api.deepseek.com，提高连接速度和稳定性
 # 3. 如果确实需要代理，可以通过环境变量 HTTP_PROXY 或 HTTPS_PROXY 设置
 http_client = httpx.AsyncClient(
-    timeout=httpx.Timeout(120.0, connect=10.0),  # 总超时120秒，连接超时10秒
+    timeout=httpx.Timeout(300.0, connect=30.0),  # 总超时300秒，连接超时30秒（支持全书解构）
     proxies=None,  # 显式禁用代理，避免不稳定的系统代理，优先直连
     limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
     follow_redirects=True
@@ -224,27 +224,59 @@ PROMPT_TEMPLATES = {
 }
 
 def extract_text_from_any(file_path):
-    """万能格式解析"""
+    """万能格式解析 - 支持全书读取"""
     ext = os.path.splitext(file_path)[1].lower()
     text = ""
     try:
         if ext == ".pdf":
             with fitz.open(file_path) as doc:
-                # 提取前 30 页，确保有足够干货
-                for page in doc[:30]:
+                # 提取全书内容，不再限制页数
+                for page in doc:
                     text += page.get_text()
         elif ext == ".epub":
             book = epub.read_epub(file_path)
             items = list(book.get_items_of_type(9))
-            for item in items[:8]: # 增加到8个章节
+            # 提取所有章节，不再限制数量
+            for item in items:
                 soup = BeautifulSoup(item.get_content(), 'html.parser')
                 text += soup.get_text()
         elif ext in [".txt", ".md"]:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                text = f.read(25000) # 读取前2.5万字
+                text = f.read()  # 读取全部内容，不再限制长度
     except Exception as e:
         print(f"解析出错: {e}")
     return text
+
+def split_into_chunks(text, chunk_size=12000):
+    """将文本按指定大小分割成多个块"""
+    chunks = []
+    current_chunk = ""
+    
+    # 按段落分割，尽量在段落边界处切割
+    paragraphs = text.split('\n\n')
+    
+    for para in paragraphs:
+        # 如果当前块加上新段落不超过限制，则添加
+        if len(current_chunk) + len(para) + 2 <= chunk_size:
+            current_chunk += para + '\n\n'
+        else:
+            # 如果当前块不为空，保存它
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            # 如果单个段落就超过限制，强制切割
+            if len(para) > chunk_size:
+                # 按字符强制切割
+                for i in range(0, len(para), chunk_size):
+                    chunks.append(para[i:i+chunk_size])
+                current_chunk = ""
+            else:
+                current_chunk = para + '\n\n'
+    
+    # 添加最后一个块
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    return chunks
 
 # 3. 核心业务接口 - 流式传输版本
 @app.post("/analyze")
@@ -258,19 +290,26 @@ async def analyze_book(
         with open(temp_path, "wb") as f:
             f.write(await file.read())
         
-        # 提取文字
+        # 提取文字（支持全书读取）
         book_content = extract_text_from_any(temp_path)
         if not book_content.strip():
             raise HTTPException(status_code=400, detail="无法提取内容，请确保文件未加密")
-
-        # 限制内容长度为15000字符，以换取更快的首字响应
-        book_content = book_content[:15000]
 
         # 验证并获取提示词
         if prompt_type not in PROMPT_TEMPLATES:
             raise HTTPException(status_code=400, detail=f"无效的提示词类型: {prompt_type}。可选值: architect, executor, disruptor")
         
         system_prompt = PROMPT_TEMPLATES[prompt_type]
+        
+        # 生成初步脱水提示词（用于分段解构）
+        preliminary_prompt = """你是一位知识提取专家。请对提供的文本片段进行"初步脱水"：
+1. 提取核心观点和关键信息
+2. 保留重要的数据、公式、案例
+3. 去除冗余描述和修饰性语言
+4. 保持逻辑结构清晰
+5. 输出格式为简洁的 Markdown
+
+请开始脱水："""
 
         # 生成唯一文件名
         timestamp = datetime.datetime.now().strftime("%H%M%S")
@@ -281,20 +320,58 @@ async def analyze_book(
         async def generate_stream():
             accumulated_text = ""
             try:
-                # 调用 DeepSeek 流式API
+                # 先发送文件名信息
+                yield f"data: {json.dumps({'type': 'filename', 'filename': safe_filename}, ensure_ascii=False)}\n\n"
+                
+                # 发送进度信息
+                yield f"data: {json.dumps({'type': 'progress', 'message': '开始全书解析...'}, ensure_ascii=False)}\n\n"
+                
+                # 分段切割：每12,000字为一个Chunk
+                chunks = split_into_chunks(book_content, chunk_size=12000)
+                total_chunks = len(chunks)
+                
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'全书已分割为 {total_chunks} 个片段，开始分段解构...'}, ensure_ascii=False)}\n\n"
+                
+                # 循环解构：对每个Chunk调用API进行初步脱水
+                dehydrated_chunks = []
+                for i, chunk in enumerate(chunks, 1):
+                    yield f"data: {json.dumps({'type': 'progress', 'message': f'正在处理第 {i}/{total_chunks} 个片段...'}, ensure_ascii=False)}\n\n"
+                    
+                    try:
+                        # 调用 DeepSeek API 进行初步脱水（非流式，因为需要完整结果）
+                        response = await client.chat.completions.create(
+                            model="deepseek-chat",
+                            messages=[
+                                {"role": "system", "content": preliminary_prompt},
+                                {"role": "user", "content": f"请对以下文本片段进行初步脱水：\n\n{chunk}"}
+                            ],
+                            stream=False
+                        )
+                        
+                        dehydrated_text = response.choices[0].message.content
+                        dehydrated_chunks.append(dehydrated_text)
+                        
+                    except Exception as e:
+                        # 如果某个片段处理失败，使用原文本
+                        print(f"片段 {i} 处理失败: {e}")
+                        dehydrated_chunks.append(chunk)
+                
+                # 合并所有脱水稿
+                combined_dehydrated = "\n\n---\n\n".join(dehydrated_chunks)
+                
+                yield f"data: {json.dumps({'type': 'progress', 'message': '所有片段处理完成，开始全局汇总...'}, ensure_ascii=False)}\n\n"
+                
+                # 全局汇总：按照"解构模式"进行最终的全书汇总
                 stream = client.chat.completions.create(
                     model="deepseek-chat",
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"请深度解构以下书籍内容：\n\n{book_content}"}
+                        {"role": "user", "content": f"请基于以下已脱水的全书内容，按照指定模式进行深度解构和全局汇总：\n\n{combined_dehydrated}"}
                     ],
                     stream=True
                 )
                 
-                # 先发送文件名信息
-                yield f"data: {json.dumps({'type': 'filename', 'filename': safe_filename}, ensure_ascii=False)}\n\n"
-                
-                # 流式接收并转发
+                # 流式接收最终汇总结果
                 for chunk in stream:
                     if chunk.choices and len(chunk.choices) > 0:
                         delta = chunk.choices[0].delta

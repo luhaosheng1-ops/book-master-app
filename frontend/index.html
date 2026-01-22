@@ -450,6 +450,10 @@
                                 
                                 if (data.type === 'filename') {
                                     filename = data.filename;
+                                } else if (data.type === 'progress') {
+                                    // 显示进度信息
+                                    document.getElementById('uploadStatus').innerHTML =
+                                        `<div class="loading-spinner mx-auto mb-4"></div><p class="text-indigo-500">${data.message}</p>`;
                                 } else if (data.type === 'content') {
                                     // 累积完整内容，等待流式传输完成后用打字机效果显示
                                     fullContent += data.chunk;
