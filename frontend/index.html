@@ -93,6 +93,28 @@
     </div>
 
     <script>
+        // 页面加载完成后立即执行
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedMD = localStorage.getItem('cached_markdown');
+            const savedFile = localStorage.getItem('cached_filename');
+
+            if (savedMD && savedFile) {
+                console.log("检测到缓存数据，正在恢复页面...");
+
+                // 1. 显示结果区域并渲染内容
+                resultArea.classList.remove('hidden');
+                contentDiv.innerHTML = marked.parse(savedMD);
+
+                // 2. 重新激活下载按钮的功能
+                downloadBtn.onclick = () => {
+                    window.location.href = `http://localhost:8000/download/${encodeURIComponent(savedFile)}`;
+                };
+
+                // 3. 更新提示状态（可选）
+                document.getElementById('uploadStatus').innerHTML =
+                    '<p class="text-indigo-500">已从缓存恢复上次的解构结果</p>';
+            }
+        });
         const fileInput = document.getElementById('fileInput');
         const dropZone = document.getElementById('dropZone');
         const contentDiv = document.getElementById('content');
@@ -137,7 +159,8 @@
 
                     // 1. 渲染 Markdown 到主展示区
                     const markdownText = res.content || res.data; // 兼容 content 或 data 字段
-
+                    contentDiv.innerHTML = marked.parse(markdownText);
+                    resultArea.classList.remove('hidden');
                     // 【新增】保存到本地缓存
                     localStorage.setItem('last_analysis_content', markdownText);
                     localStorage.setItem('last_analysis_filename', res.filename);
