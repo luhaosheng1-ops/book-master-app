@@ -83,6 +83,14 @@
                         PDF</button>
                 </div>
             </div>
+            <div class="space-x-2">
+                <button onclick="clearCache()"
+                    class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">🧹 清除记录</button>
+                <button id="download-btn"
+                    class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm">📥 下载 MD</button>
+                <button onclick="window.print()"
+                    class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 text-sm">🖨️ 打印 PDF</button>
+            </div>
             <div id="content"></div>
         </div>
     </div>
@@ -133,6 +141,24 @@
 
         dropZone.onclick = () => fileInput.click();
         fileInput.onchange = (e) => handleUpload(e.target.files[0]);
+
+        function clearCache() {
+            if (confirm("确定要清空当前的解构记录吗？这将删除本地缓存。")) {
+                // 清除本地存储
+                localStorage.removeItem('cached_markdown');
+                localStorage.removeItem('cached_filename');
+
+                // 隐藏结果区域
+                resultArea.classList.add('hidden');
+
+                // 重置上传状态文字
+                document.getElementById('uploadStatus').innerHTML =
+                    '<p class="text-lg text-gray-600">将电子书拖到这里，或点击选择</p>';
+
+                // 刷新页面确保状态彻底重置
+                location.reload();
+            }
+        }
 
         async function handleUpload(file) {
             if (!file) return;
