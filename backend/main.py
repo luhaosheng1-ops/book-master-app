@@ -349,6 +349,77 @@ def extract_text_from_any(file_path):
         print(f"解析出错: {e}")
     return text
 
+def generate_filename(book_title, mode, book_content_sample=""):
+    """
+    自动化专业命名函数
+    格式：[Category（AI识别）][ShortName][Mode]_[YYYYMMDD].md
+    示例：FIN_MutualFunds_Architect_20260123.md
+    """
+    # 模式映射
+    mode_map = {
+        "architect": "Architect",
+        "executor": "Executor", 
+        "disruptor": "Disruptor"
+    }
+    mode_name = mode_map.get(mode.lower(), "Architect")
+    
+    # 生成日期
+    date_str = datetime.datetime.now().strftime("%Y%m%d")
+    
+    # 从书名提取ShortName（简化版：取前几个单词的首字母或关键词）
+    # 清理书名
+    book_title_clean = "".join(c for c in book_title if c.isalnum() or c in (' ', '-', '_')).strip()
+    
+    # 提取关键词作为ShortName（取前2-3个有意义的词）
+    words = book_title_clean.replace('_', ' ').replace('-', ' ').split()
+    # 过滤掉常见无意义词
+    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', '解构', '的', '与', '和'}
+    meaningful_words = [w for w in words if w.lower() not in stop_words and len(w) > 1]
+    
+    if meaningful_words:
+        # 取前2-3个词，每个词取前几个字符
+        short_name_parts = []
+        for word in meaningful_words[:3]:
+            # 如果是英文，取前4-6个字符；如果是中文，取整个词
+            if word.isascii():
+                short_name_parts.append(word[:6].capitalize())
+            else:
+                short_name_parts.append(word)
+        short_name = ''.join(short_name_parts)
+    else:
+        # 如果没有找到有意义的词，使用原书名前20个字符
+        short_name = book_title_clean[:20].replace(' ', '')
+    
+    # 清理ShortName，只保留字母数字
+    short_name = "".join(c for c in short_name if c.isalnum()).strip()
+    if not short_name:
+        short_name = "Book"
+    
+    # 类别识别（根据模式和内容样本，这里先用模式映射，后续可通过AI识别）
+    category_map = {
+        "architect": "LOGIC",
+        "executor": "ACTION",
+        "disruptor": "COGNI"
+    }
+    
+    # 如果内容样本包含特定关键词，可以更精确识别类别
+    if book_content_sample:
+        content_lower = book_content_sample.lower()[:500]  # 只检查前500字符
+        if any(word in content_lower for word in ['投资', '理财', '基金', '股票', 'finance', 'investment']):
+            category = "FIN"
+        elif any(word in content_lower for word in ['认知', '思维', '心理', 'cognitive', 'psychology']):
+            category = "COGNI"
+        elif any(word in content_lower for word in ['商业', '策略', '管理', 'business', 'strategy']):
+            category = "BIZ"
+        else:
+            category = category_map.get(mode.lower(), "GEN")
+    else:
+        category = category_map.get(mode.lower(), "GEN")
+    
+    # 组合文件名
+    filename = f"{category}_{short_name}_{mode_name}_{date_str}.md"
+    return filename
+
 def split_into_chunks(text, chunk_size=10000):
     """将文本按指定大小分割成多个块"""
     chunks = []
@@ -446,11 +517,6 @@ async def analyze_book(
                     }
                 )
             
-            # 提取文字（支持全书读取）
-            book_content = extract_text_from_any(temp_path)
-            if not book_content.strip():
-                raise HTTPException(status_code=400, detail="无法提取内容，请确保文件未加密")
-
         # 验证并获取提示词
         if prompt_type not in PROMPT_TEMPLATES:
             raise HTTPException(status_code=400, detail=f"无效的提示词类型: {prompt_type}。可选值: architect, executor, disruptor")
@@ -467,24 +533,14 @@ async def analyze_book(
 
 请开始脱水："""
 
-        # 生成唯一文件名（格式：Category_BookName_Mode_Timestamp.md）
-        # 先尝试从内容中提取书名和类别（简单提取，后续可通过AI优化）
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        book_name = os.path.splitext(file.filename)[0]
-        # 清理文件名中的特殊字符
-        book_name = "".join(c for c in book_name if c.isalnum() or c in (' ', '-', '_')).strip()
-        book_name = book_name.replace(' ', '_')
+        # 提取文字（支持全书读取）- 先提取用于文件名生成
+        book_content = extract_text_from_any(temp_path)
+        if not book_content.strip():
+            raise HTTPException(status_code=400, detail="无法提取内容，请确保文件未加密")
         
-        # 类别映射（可根据内容自动识别，这里先用简单映射）
-        category_map = {
-            "architect": "LOGIC",  # 逻辑架构
-            "executor": "ACTION",  # 行动执行
-            "disruptor": "COGNI"   # 认知颠覆
-        }
-        category = category_map.get(prompt_type, "GEN")
-        
-        mode_name = prompt_type.capitalize()  # Architect, Executor, Disruptor
-        safe_filename = f"{category}_{book_name}_{mode_name}_{timestamp}.md"
+        # 使用自动化专业命名函数生成文件名
+        book_title = os.path.splitext(file.filename)[0]
+        safe_filename = generate_filename(book_title, prompt_type, book_content[:1000])  # 传入前1000字符用于类别识别
         full_save_path = os.path.join(OUTPUT_DIR, safe_filename)
         
         # 流式生成器函数
@@ -495,13 +551,13 @@ async def analyze_book(
                 yield f"data: {json.dumps({'type': 'filename', 'filename': safe_filename}, ensure_ascii=False)}\n\n"
                 
                 # 发送进度信息
-                yield f"data: {json.dumps({'type': 'progress', 'message': '开始全书解析...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'val': 5, 'msg': '开始全书解析...'}, ensure_ascii=False)}\n\n"
                 
-                # 分段切割：每10,000字为一个Chunk（优化：固定大小）
+                # 分段切割：每10,000字为一个Chunk（Map-Reduce 模式）
                 chunks = split_into_chunks(book_content, chunk_size=10000)
                 total_chunks = len(chunks)
                 
-                yield f"data: {json.dumps({'type': 'progress', 'message': f'全书已分割为 {total_chunks} 个片段，开始并发解构...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'val': 10, 'msg': f'全书已分割为 {total_chunks} 个片段，开始并发解构（Map-Reduce模式）...'}, ensure_ascii=False)}\n\n"
                 
                 # 并发解构：使用 asyncio.gather 并行调用 DeepSeek API
                 async def process_chunk(chunk, index):
@@ -537,13 +593,14 @@ async def analyze_book(
                     index, result = await coro
                     dehydrated_chunks[index] = result
                     completed_count += 1
-                    # 发送进度更新
-                    yield f"data: {json.dumps({'type': 'progress', 'message': f'正在处理第 {completed_count}/{total_chunks} 个片段...'}, ensure_ascii=False)}\n\n"
+                    # 进度感知：发送详细的进度消息（包含百分比）
+                    progress_percent = int((completed_count / total_chunks) * 45) + 35  # 35%-80% 范围
+                    yield f"data: {json.dumps({'type': 'progress', 'val': progress_percent, 'msg': f'正在解构第{completed_count}章节（共{total_chunks}章节）...'}, ensure_ascii=False)}\n\n"
                 
                 # 合并所有脱水稿
                 combined_dehydrated = "\n\n---\n\n".join(dehydrated_chunks)
                 
-                yield f"data: {json.dumps({'type': 'progress', 'message': '所有片段处理完成，开始全局汇总...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'val': 80, 'msg': '所有片段处理完成，开始全局汇总...'}, ensure_ascii=False)}\n\n"
                 
                 # 全局汇总：按照"解构模式"进行最终的全书汇总
                 stream = client.chat.completions.create(
@@ -555,15 +612,22 @@ async def analyze_book(
                     stream=True
                 )
                 
-                # 流式接收最终汇总结果
+                # 流式接收最终汇总结果：每生成一个片段就立即 yield 给前端
+                chunk_count = 0
                 for chunk in stream:
                     if chunk.choices and len(chunk.choices) > 0:
                         delta = chunk.choices[0].delta
                         if hasattr(delta, 'content') and delta.content:
                             content = delta.content
                             accumulated_text += content
-                            # 发送内容片段
+                            chunk_count += 1
+                            # 关键：每生成一个片段就立即 yield 给前端
                             yield f"data: {json.dumps({'type': 'content', 'chunk': content}, ensure_ascii=False)}\n\n"
+                            
+                            # 每100个chunk更新一次进度（85%-95%）
+                            if chunk_count % 100 == 0:
+                                progress_val = min(85 + int((chunk_count / 1000) * 10), 95)
+                                yield f"data: {json.dumps({'type': 'progress', 'val': progress_val, 'msg': f'正在生成内容...（已生成 {chunk_count} 个片段）'}, ensure_ascii=False)}\n\n"
                 
                 # 流式传输完成后，保存完整文件
                 with open(full_save_path, "w", encoding="utf-8") as f:

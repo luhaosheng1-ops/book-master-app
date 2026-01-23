@@ -539,34 +539,43 @@
                                     filename = data.filename;
                                 } else if (data.type === 'progress') {
                                     // 显示进度信息并更新进度条
-                                    const message = data.message || '';
+                                    // 支持新的格式：{type: 'progress', val: 40, msg: '...'}
+                                    let progressVal = 0;
+                                    let progressMsg = '';
                                     
-                                    // 解析进度信息，更新进度条
-                                    if (message.includes('分割为')) {
-                                        // 提取片段数量
-                                        const match = message.match(/(\d+)\s*个片段/);
-                                        if (match) {
-                                            totalChunks = parseInt(match[1]);
-                                            updateProgress(35, message);
-                                        }
-                                    } else if (message.includes('正在处理第')) {
-                                        // 提取当前处理的片段编号
-                                        const match = message.match(/第\s*(\d+)\/(\d+)/);
-                                        if (match) {
-                                            chunkCount = parseInt(match[1]);
-                                            totalChunks = parseInt(match[2]);
-                                            // 分段解构阶段：35% - 80%
-                                            const chunkProgress = 35 + (chunkCount / totalChunks) * 45;
-                                            updateProgress(chunkProgress, message);
-                                        } else {
-                                            updateProgress(40, message);
-                                        }
-                                    } else if (message.includes('汇总')) {
-                                        // 汇总阶段：80% - 95%
-                                        updateProgress(85, message);
+                                    if (data.val !== undefined) {
+                                        // 新格式：直接使用 val 和 msg
+                                        progressVal = data.val;
+                                        progressMsg = data.msg || data.message || '';
                                     } else {
-                                        updateProgress(40, message);
+                                        // 旧格式：从 message 解析
+                                        const message = data.message || '';
+                                        progressMsg = message;
+                                        
+                                        if (message.includes('分割为')) {
+                                            const match = message.match(/(\d+)\s*个片段/);
+                                            if (match) {
+                                                totalChunks = parseInt(match[1]);
+                                                progressVal = 35;
+                                            }
+                                        } else if (message.includes('正在解构第') || message.includes('正在处理第')) {
+                                            // 提取当前处理的片段编号
+                                            const match = message.match(/第\s*(\d+).*?共\s*(\d+)/) || message.match(/第\s*(\d+)\/(\d+)/);
+                                            if (match) {
+                                                chunkCount = parseInt(match[1]);
+                                                totalChunks = parseInt(match[2]);
+                                                progressVal = 35 + (chunkCount / totalChunks) * 45;
+                                            } else {
+                                                progressVal = 40;
+                                            }
+                                        } else if (message.includes('汇总')) {
+                                            progressVal = 85;
+                                        } else {
+                                            progressVal = 40;
+                                        }
                                     }
+                                    
+                                    updateProgress(progressVal, progressMsg);
                                 } else if (data.type === 'content') {
                                     // 累积完整内容，等待流式传输完成后用打字机效果显示
                                     fullContent += data.chunk;
