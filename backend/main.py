@@ -499,12 +499,13 @@ async def analyze_book(
                 # 流式返回缓存内容
                 async def generate_cached_stream():
                     yield f"data: {json.dumps({'type': 'filename', 'filename': safe_filename}, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'type': 'progress', 'message': '使用缓存结果，快速返回...'}, ensure_ascii=False)}\n\n"
-                    # 模拟流式输出缓存内容
+                    yield f"data: {json.dumps({'type': 'status', 'msg': '使用缓存结果，快速返回...'}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'progress', 'val': 50}, ensure_ascii=False)}\n\n"
+                    # 模拟流式输出缓存内容（使用新格式 val）
                     chunk_size = 100
                     for i in range(0, len(cached_content), chunk_size):
                         chunk = cached_content[i:i+chunk_size]
-                        yield f"data: {json.dumps({'type': 'content', 'chunk': chunk}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'content', 'val': chunk}, ensure_ascii=False)}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'filename': safe_filename}, ensure_ascii=False)}\n\n"
                 
                 return StreamingResponse(
@@ -551,13 +552,16 @@ async def analyze_book(
                 yield f"data: {json.dumps({'type': 'filename', 'filename': safe_filename}, ensure_ascii=False)}\n\n"
                 
                 # 发送进度信息
-                yield f"data: {json.dumps({'type': 'progress', 'val': 5, 'msg': '开始全书解析...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'status', 'msg': '开始全书解析...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'val': 5}, ensure_ascii=False)}\n\n"
                 
                 # 分段切割：每10,000字为一个Chunk（Map-Reduce 模式）
+                yield f"data: {json.dumps({'type': 'status', 'msg': '正在分段读取全书...'}, ensure_ascii=False)}\n\n"
                 chunks = split_into_chunks(book_content, chunk_size=10000)
                 total_chunks = len(chunks)
                 
-                yield f"data: {json.dumps({'type': 'progress', 'val': 10, 'msg': f'全书已分割为 {total_chunks} 个片段，开始并发解构（Map-Reduce模式）...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'status', 'msg': f'全书已分割为 {total_chunks} 个片段，开始并发解构（Map-Reduce模式）...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'val': 10}, ensure_ascii=False)}\n\n"
                 
                 # 并发解构：使用 asyncio.gather 并行调用 DeepSeek API
                 async def process_chunk(chunk, index):
@@ -593,28 +597,33 @@ async def analyze_book(
                     index, result = await coro
                     dehydrated_chunks[index] = result
                     completed_count += 1
-                    # 进度感知：发送详细的进度消息（包含百分比）
+                    # 进度感知：每完成一个 Chunk 就 yield 一个进度百分比
                     progress_percent = int((completed_count / total_chunks) * 45) + 35  # 35%-80% 范围
-                    yield f"data: {json.dumps({'type': 'progress', 'val': progress_percent, 'msg': f'正在解构第{completed_count}章节（共{total_chunks}章节）...'}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'status', 'msg': f'正在解构第{completed_count}章节（共{total_chunks}章节）...'}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'progress', 'val': progress_percent}, ensure_ascii=False)}\n\n"
                 
                 # 合并所有脱水稿
                 combined_dehydrated = "\n\n---\n\n".join(dehydrated_chunks)
                 
-                yield f"data: {json.dumps({'type': 'progress', 'val': 80, 'msg': '所有片段处理完成，开始全局汇总...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'status', 'msg': '所有片段处理完成，开始全局汇总...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'val': 80}, ensure_ascii=False)}\n\n"
                 
                 # 全局汇总：按照"解构模式"进行最终的全书汇总
-                stream = client.chat.completions.create(
+                # 开启流式传输：使用 stream=True，每生成一个片段就立即 yield 给前端
+                yield f"data: {json.dumps({'type': 'status', 'msg': '开始全局汇总，生成最终解构报告...'}, ensure_ascii=False)}\n\n"
+                
+                response = await client.chat.completions.create(
                     model="deepseek-chat",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"请基于以下已脱水的全书内容，按照指定模式进行深度解构和全局汇总：\n\n{combined_dehydrated}"}
                     ],
-                    stream=True
+                    stream=True  # 关键：必须使用 stream=True
                 )
                 
                 # 流式接收最终汇总结果：每生成一个片段就立即 yield 给前端
                 chunk_count = 0
-                for chunk in stream:
+                async for chunk in response:
                     if chunk.choices and len(chunk.choices) > 0:
                         delta = chunk.choices[0].delta
                         if hasattr(delta, 'content') and delta.content:
@@ -622,12 +631,18 @@ async def analyze_book(
                             accumulated_text += content
                             chunk_count += 1
                             # 关键：每生成一个片段就立即 yield 给前端
-                            yield f"data: {json.dumps({'type': 'content', 'chunk': content}, ensure_ascii=False)}\n\n"
+                            # 使用 unicode_escape 处理特殊字符
+                            try:
+                                content_escaped = content.encode("utf-8").decode("unicode_escape")
+                            except:
+                                content_escaped = content
+                            yield f"data: {json.dumps({'type': 'content', 'val': content_escaped}, ensure_ascii=False)}\n\n"
                             
                             # 每100个chunk更新一次进度（85%-95%）
                             if chunk_count % 100 == 0:
                                 progress_val = min(85 + int((chunk_count / 1000) * 10), 95)
-                                yield f"data: {json.dumps({'type': 'progress', 'val': progress_val, 'msg': f'正在生成内容...（已生成 {chunk_count} 个片段）'}, ensure_ascii=False)}\n\n"
+                                yield f"data: {json.dumps({'type': 'status', 'msg': f'正在生成内容...（已生成 {chunk_count} 个片段）'}, ensure_ascii=False)}\n\n"
+                                yield f"data: {json.dumps({'type': 'progress', 'val': progress_val}, ensure_ascii=False)}\n\n"
                 
                 # 流式传输完成后，保存完整文件
                 with open(full_save_path, "w", encoding="utf-8") as f:

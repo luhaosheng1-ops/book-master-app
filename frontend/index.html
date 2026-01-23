@@ -472,11 +472,11 @@
             // 界面反馈：上传开始后，设置带有进度条的加载提示
             document.getElementById('uploadStatus').innerHTML = `
                 <div class="loading-spinner mx-auto mb-4 animate-bounce"></div>
-                <p class="animate-pulse mb-2">正在深度解构中，AI正在思考...</p>
+                <p id="statusText" class="animate-pulse mb-2">正在深度解构中，AI正在思考...</p>
                 <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
                     <div id="progressBar" class="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
                 </div>
-                <p id="progressText" class="text-sm text-gray-500">0% - 准备中...</p>
+                <p id="progressText" class="text-sm text-gray-500">0%</p>
             `;
             
             // 清空之前的内容
@@ -486,11 +486,13 @@
             let progressPercent = 0;
             const progressBar = document.getElementById('progressBar');
             const progressText = document.getElementById('progressText');
+            const statusText = document.getElementById('statusText');
 
             const updateProgress = (percent, text) => {
                 progressPercent = Math.min(100, Math.max(0, percent));
                 if (progressBar) progressBar.style.width = `${progressPercent}%`;
-                if (progressText) progressText.textContent = `${Math.round(progressPercent)}% - ${text}`;
+                if (progressText) progressText.textContent = `${Math.round(progressPercent)}%`;
+                if (statusText && text) statusText.textContent = text;
             };
 
             const formData = new FormData();
@@ -577,8 +579,28 @@
                                     
                                     updateProgress(progressVal, progressMsg);
                                 } else if (data.type === 'content') {
-                                    // 累积完整内容，等待流式传输完成后用打字机效果显示
-                                    fullContent += data.chunk;
+                                    // 实时蹦字：每收到内容就立即渲染
+                                    if (data.val) {
+                                        // 新格式：使用 val 字段
+                                        fullContent += data.val;
+                                        // 实时更新内容（使用 marked.parse）
+                                        contentDiv.innerHTML = marked.parse(fullContent);
+                                        
+                                        // 显示结果区域（如果还没显示）
+                                        if (resultArea.classList.contains('hidden')) {
+                                            resultArea.classList.remove('hidden');
+                                        }
+                                    } else if (data.chunk) {
+                                        // 兼容旧格式：使用 chunk 字段
+                                        fullContent += data.chunk;
+                                        contentDiv.innerHTML = marked.parse(fullContent);
+                                        if (resultArea.classList.contains('hidden')) {
+                                            resultArea.classList.remove('hidden');
+                                        }
+                                    }
+                                } else if (data.type === 'status') {
+                                    // 实时更新进度文字
+                                    if (statusText) statusText.textContent = data.msg;
                                 } else if (data.type === 'done') {
                                     // 流式传输完成，进度到100%
                                     updateProgress(100, '解构完成！');
@@ -588,35 +610,43 @@
                                         throw new Error('未获取到内容');
                                     }
                                     
-                                    // 保存完整内容到缓存（在打字机效果开始前保存）
+                                    // 保存完整内容到缓存
                                     localStorage.setItem('cached_markdown', fullContent);
                                     localStorage.setItem('cached_filename', filename || data.filename);
                                     
-                                    // 严格顺序：只有当数据完全接收后，才更新状态
-                                    // 更新状态：准备开始打字机效果（但还不显示成功）
-                                    updateProgress(100, '内容生成完成，正在展示...');
+                                    // 渲染 Mermaid 图表（如果内容已包含）
+                                    if (typeof mermaid !== 'undefined') {
+                                        setTimeout(() => {
+                                            try {
+                                                // 处理 Mermaid 代码块
+                                                const codeBlocks = contentDiv.querySelectorAll('code.language-mermaid');
+                                                codeBlocks.forEach((code) => {
+                                                    const pre = code.parentElement;
+                                                    if (pre && pre.tagName === 'PRE') {
+                                                        pre.className = 'mermaid';
+                                                        pre.textContent = code.textContent;
+                                                    }
+                                                });
+                                                mermaid.run();
+                                            } catch (e) {
+                                                console.warn('Mermaid 渲染失败:', e);
+                                            }
+                                        }, 100);
+                                    }
                                     
-                                    // 清空内容区域，准备打字机效果
-                                    contentDiv.innerHTML = '';
-                                    
-                                    // 打字机触发：在 typeWriter 函数开始运行后，再移除 hidden
-                                    // 先移除 hidden，让用户看到打字机效果
+                                    // 显示结果区域（内容已经在流式传输中实时显示了）
                                     resultArea.classList.remove('hidden');
                                     
-                                    // 使用打字机效果显示完整内容
-                                    await typeWriter(fullContent, contentDiv, 8);
-                                    
-                                    // 打字机完成后，才显示成功状态和按钮
-                                    // 绑定下载按钮（确保在打字机完成后绑定）
+                                    // 绑定下载按钮
                                     bindDownload(filename || data.filename);
                                     
                                     // 显示下载和打印按钮
                                     if (downloadBtn) downloadBtn.style.display = 'block';
                                     if (printBtn) printBtn.style.display = 'block';
                                     
-                                    // 严格顺序：只有在打字机完成后，才更新为"解构完成"
-                                    document.getElementById('uploadStatus').innerHTML =
-                                        '<p class="text-green-600 font-bold">✅ 解构完成！</p><p class="text-sm text-gray-400 mt-2">文件已存入本地，也可点击下方按钮下载</p>';
+                                    // 更新状态
+                                    if (statusText) statusText.textContent = '✅ 解构完成！';
+                                    updateProgress(100, '');
                                     
                                     document.getElementById('status-tag').innerText = '解构完成';
                                 } else if (data.type === 'error') {
