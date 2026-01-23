@@ -34,26 +34,28 @@
             overflow-x: auto;
         }
 
-        /* YAML 块样式：第一个 pre 标签（通常是 YAML） */
+        /* YAML 块样式：第一个 pre 标签（通常是 YAML）- 3.5升级：灰色底衬 */
         .prose pre:first-of-type {
-            background-color: #f3f4f6;
+            background-color: #f9fafb;
             border-left: 4px solid #9ca3af;
             padding: 1rem;
             border-radius: 0.5rem;
             font-family: 'Courier New', monospace;
             font-size: 0.75rem;
             margin-bottom: 2rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
 
-        /* 引用块 (Evidence Chain)：硬核证据链样式 */
+        /* 引用块 (Evidence Chain)：硬核证据链样式 - 3.5升级：indigo边框 */
         .prose blockquote {
-            border-left: 4px solid #1e40af;
-            background-color: #eff6ff;
+            border-left: 4px solid #6366f1;
+            background-color: #eef2ff;
             padding: 1rem 1.5rem;
             margin: 1.5rem 0;
             border-radius: 0.25rem;
             font-style: normal;
-            color: #1e3a8a;
+            color: #4338ca;
+            box-shadow: 0 1px 3px rgba(99, 102, 241, 0.1);
         }
 
         .prose blockquote p {
@@ -187,6 +189,7 @@
             </div>
         </div>
 
+        <!-- 3.5升级：在内容区域上方保留进度条 -->
         <div id="resultArea" class="hidden bg-white shadow-lg rounded-xl p-10 prose shadow-xl">
             <div class="flex justify-between items-center mb-8 border-b pb-4">
                 <div class="flex flex-col">
@@ -201,6 +204,13 @@
                         class="bg-indigo-600 text-white px-3 py-2 rounded hover:bg-indigo-700 text-xs">🖨️ 打印
                         PDF</button>
                 </div>
+            </div>
+            <!-- 3.5升级：在内容区域上方显示微小进度条（仅在流式传输时显示） -->
+            <div id="contentProgressBar" class="hidden mb-4">
+                <div class="w-full bg-gray-200 rounded-full h-1.5">
+                    <div id="contentProgressBarFill" class="bg-indigo-500 h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <p id="contentProgressText" class="text-xs text-gray-500 mt-1">正在渲染内容...</p>
             </div>
             <div id="content"></div>
         </div>
@@ -589,6 +599,19 @@
                                         // 显示结果区域（如果还没显示）
                                         if (resultArea.classList.contains('hidden')) {
                                             resultArea.classList.remove('hidden');
+                                            // 3.5升级：显示内容区域上方的进度条
+                                            const contentProgressBar = document.getElementById('contentProgressBar');
+                                            if (contentProgressBar) contentProgressBar.classList.remove('hidden');
+                                        }
+                                        
+                                        // 3.5升级：更新内容区域上方的进度条（模拟渲染进度）
+                                        const contentProgressBarFill = document.getElementById('contentProgressBarFill');
+                                        const contentProgressText = document.getElementById('contentProgressText');
+                                        if (contentProgressBarFill && contentProgressText) {
+                                            // 根据内容长度估算进度（85%-95%）
+                                            const estimatedProgress = Math.min(85 + (fullContent.length / 10000) * 10, 95);
+                                            contentProgressBarFill.style.width = `${estimatedProgress}%`;
+                                            contentProgressText.textContent = '正在渲染内容...';
                                         }
                                     } else if (data.chunk) {
                                         // 兼容旧格式：使用 chunk 字段
@@ -596,13 +619,22 @@
                                         contentDiv.innerHTML = marked.parse(fullContent);
                                         if (resultArea.classList.contains('hidden')) {
                                             resultArea.classList.remove('hidden');
+                                            const contentProgressBar = document.getElementById('contentProgressBar');
+                                            if (contentProgressBar) contentProgressBar.classList.remove('hidden');
                                         }
                                     }
                                 } else if (data.type === 'status') {
                                     // 实时更新进度文字
                                     if (statusText) statusText.textContent = data.msg;
+                                    // 3.5升级：同时更新内容区域上方的进度文字
+                                    const contentProgressText = document.getElementById('contentProgressText');
+                                    if (contentProgressText && data.msg) {
+                                        if (data.msg.includes('并发解构') || data.msg.includes('汇总')) {
+                                            contentProgressText.textContent = data.msg;
+                                        }
+                                    }
                                 } else if (data.type === 'done') {
-                                    // 流式传输完成，进度到100%
+                                    // 流式传输完成（reader.read() 返回 done: true），进度到100%
                                     updateProgress(100, '解构完成！');
                                     
                                     // 确保有内容
@@ -614,24 +646,30 @@
                                     localStorage.setItem('cached_markdown', fullContent);
                                     localStorage.setItem('cached_filename', filename || data.filename);
                                     
-                                    // 渲染 Mermaid 图表（如果内容已包含）
+                                    // 3.5升级：Mermaid 渲染仅在流式传输完全结束后触发（done: true）
+                                    // 确保所有内容都已渲染完成后再处理 Mermaid
                                     if (typeof mermaid !== 'undefined') {
+                                        // 使用 setTimeout 确保 DOM 更新完成
                                         setTimeout(() => {
                                             try {
-                                                // 处理 Mermaid 代码块
+                                                // 处理 Mermaid 代码块：将 marked.js 输出的 code.language-mermaid 转换为 pre.mermaid
                                                 const codeBlocks = contentDiv.querySelectorAll('code.language-mermaid');
                                                 codeBlocks.forEach((code) => {
                                                     const pre = code.parentElement;
                                                     if (pre && pre.tagName === 'PRE') {
                                                         pre.className = 'mermaid';
                                                         pre.textContent = code.textContent;
+                                                        // 移除 code 标签
+                                                        code.remove();
                                                     }
                                                 });
+                                                // 调用 mermaid.run() 渲染所有图表
                                                 mermaid.run();
+                                                console.log('[LOG] Mermaid 渲染完成（流式传输结束后）');
                                             } catch (e) {
                                                 console.warn('Mermaid 渲染失败:', e);
                                             }
-                                        }, 100);
+                                        }, 200); // 增加延迟确保 DOM 完全更新
                                     }
                                     
                                     // 显示结果区域（内容已经在流式传输中实时显示了）
@@ -647,6 +685,10 @@
                                     // 更新状态
                                     if (statusText) statusText.textContent = '✅ 解构完成！';
                                     updateProgress(100, '');
+                                    
+                                    // 3.5升级：隐藏内容区域上方的进度条（流式传输完成）
+                                    const contentProgressBar = document.getElementById('contentProgressBar');
+                                    if (contentProgressBar) contentProgressBar.classList.add('hidden');
                                     
                                     document.getElementById('status-tag').innerText = '解构完成';
                                 } else if (data.type === 'error') {
