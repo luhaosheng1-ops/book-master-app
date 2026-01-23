@@ -23,6 +23,53 @@
             color: #2d3436;
         }
 
+        /* Tailwind Prose 自定义扩展 */
+        .prose pre {
+            background-color: #f7f7f7;
+            border-left: 4px solid #9ca3af;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            overflow-x: auto;
+        }
+
+        /* YAML 块样式：第一个 pre 标签（通常是 YAML） */
+        .prose pre:first-of-type {
+            background-color: #f3f4f6;
+            border-left: 4px solid #9ca3af;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            margin-bottom: 2rem;
+        }
+
+        /* 引用块 (Evidence Chain)：硬核证据链样式 */
+        .prose blockquote {
+            border-left: 4px solid #1e40af;
+            background-color: #eff6ff;
+            padding: 1rem 1.5rem;
+            margin: 1.5rem 0;
+            border-radius: 0.25rem;
+            font-style: normal;
+            color: #1e3a8a;
+        }
+
+        .prose blockquote p {
+            margin: 0;
+            color: #1e3a8a;
+        }
+
+        /* Mermaid 图表容器 */
+        .prose .mermaid {
+            background-color: #ffffff;
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            border: 1px solid #e5e7eb;
+            margin: 2rem 0;
+        }
+
         .upload-area {
             border: 2px dashed #a29bfe;
             transition: all 0.3s;
@@ -341,10 +388,16 @@
                         // 确保所有内容都已解析
                         element.innerHTML = marked.parse(currentText);
                         
-                        // 智能解析 Mermaid：扫描并渲染页面中的 Mermaid 代码块
-                        if (typeof mermaid !== 'undefined') {
-                            // 等待 DOM 更新完成
-                            setTimeout(() => {
+                        // 应用样式：美化 YAML 块和引用块
+                        setTimeout(() => {
+                            // YAML 块样式：第一个 pre 标签（通常是 YAML）
+                            const firstPre = element.querySelector('pre:first-of-type');
+                            if (firstPre && firstPre.textContent.includes('---')) {
+                                firstPre.classList.add('bg-gray-100', 'p-4', 'rounded-lg', 'border-l-4', 'border-gray-400', 'font-mono', 'text-xs');
+                            }
+                            
+                            // 智能解析 Mermaid：扫描并渲染页面中的 Mermaid 代码块
+                            if (typeof mermaid !== 'undefined') {
                                 try {
                                     // Mermaid 会自动识别 <pre class="mermaid"> 或 <code class="language-mermaid">
                                     // 但 marked.js 默认生成 <pre><code class="language-mermaid">
@@ -363,8 +416,8 @@
                                 } catch (e) {
                                     console.warn('Mermaid 渲染失败:', e);
                                 }
-                            }, 100);
-                        }
+                            }
+                        }, 100);
                         
                         resolve();
                     }
@@ -399,14 +452,46 @@
         async function handleUpload(file) {
             if (!file) return;
 
-            // 界面反馈：上传开始后，设置带有 animate-bounce 动画的加载提示
-            document.getElementById('uploadStatus').innerHTML =
-                '<div class="loading-spinner mx-auto mb-4 animate-bounce"></div><p class="animate-pulse">正在深度解构中，AI正在思考...</p>';
-            resultArea.classList.remove('hidden');
+            // 防止重复点击：禁用上传按钮
+            const uploadButton = dropZone;
+            const originalCursor = uploadButton.style.cursor;
+            uploadButton.style.pointerEvents = 'none';
+            uploadButton.style.opacity = '0.6';
+            uploadButton.style.cursor = 'not-allowed';
+
+            // 严禁提前显示：显式地给 resultArea 加上 hidden 类
+            resultArea.classList.add('hidden');
             resultContainer.style.display = 'none';
             
+            // 隐藏下载和打印按钮，防止误点
+            const downloadBtn = document.getElementById('download-btn');
+            const printBtn = document.querySelector('button[onclick="window.print()"]');
+            if (downloadBtn) downloadBtn.style.display = 'none';
+            if (printBtn) printBtn.style.display = 'none';
+
+            // 界面反馈：上传开始后，设置带有进度条的加载提示
+            document.getElementById('uploadStatus').innerHTML = `
+                <div class="loading-spinner mx-auto mb-4 animate-bounce"></div>
+                <p class="animate-pulse mb-2">正在深度解构中，AI正在思考...</p>
+                <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+                    <div id="progressBar" class="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <p id="progressText" class="text-sm text-gray-500">0% - 准备中...</p>
+            `;
+            
             // 清空之前的内容
-            contentDiv.innerHTML = '<div class="typing-indicator"></div>';
+            contentDiv.innerHTML = '';
+
+            // 初始化进度
+            let progressPercent = 0;
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+
+            const updateProgress = (percent, text) => {
+                progressPercent = Math.min(100, Math.max(0, percent));
+                if (progressBar) progressBar.style.width = `${progressPercent}%`;
+                if (progressText) progressText.textContent = `${Math.round(progressPercent)}% - ${text}`;
+            };
 
             const formData = new FormData();
             formData.append('file', file);
@@ -415,6 +500,10 @@
             const selectedPromptType = promptTypeSelect.value;
 
             try {
+                // 模拟进度：前10秒跳到30%（上传提取）
+                updateProgress(5, '正在上传文件...');
+                setTimeout(() => updateProgress(30, '文件上传完成，开始提取内容...'), 2000);
+
                 // 将 prompt_type 作为查询参数传递
                 const response = await fetch(`http://localhost:8000/analyze?prompt_type=${encodeURIComponent(selectedPromptType)}`, {
                     method: 'POST',
@@ -430,10 +519,8 @@
                 let buffer = '';
                 let fullContent = '';
                 let filename = '';
-
-                // 更新状态：流式传输中
-                document.getElementById('uploadStatus').innerHTML =
-                    '<div class="loading-spinner mx-auto mb-4"></div><p class="text-indigo-500">✨ AI正在生成内容...</p>';
+                let chunkCount = 0;
+                let totalChunks = 0;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -451,14 +538,42 @@
                                 if (data.type === 'filename') {
                                     filename = data.filename;
                                 } else if (data.type === 'progress') {
-                                    // 显示进度信息
-                                    document.getElementById('uploadStatus').innerHTML =
-                                        `<div class="loading-spinner mx-auto mb-4"></div><p class="text-indigo-500">${data.message}</p>`;
+                                    // 显示进度信息并更新进度条
+                                    const message = data.message || '';
+                                    
+                                    // 解析进度信息，更新进度条
+                                    if (message.includes('分割为')) {
+                                        // 提取片段数量
+                                        const match = message.match(/(\d+)\s*个片段/);
+                                        if (match) {
+                                            totalChunks = parseInt(match[1]);
+                                            updateProgress(35, message);
+                                        }
+                                    } else if (message.includes('正在处理第')) {
+                                        // 提取当前处理的片段编号
+                                        const match = message.match(/第\s*(\d+)\/(\d+)/);
+                                        if (match) {
+                                            chunkCount = parseInt(match[1]);
+                                            totalChunks = parseInt(match[2]);
+                                            // 分段解构阶段：35% - 80%
+                                            const chunkProgress = 35 + (chunkCount / totalChunks) * 45;
+                                            updateProgress(chunkProgress, message);
+                                        } else {
+                                            updateProgress(40, message);
+                                        }
+                                    } else if (message.includes('汇总')) {
+                                        // 汇总阶段：80% - 95%
+                                        updateProgress(85, message);
+                                    } else {
+                                        updateProgress(40, message);
+                                    }
                                 } else if (data.type === 'content') {
                                     // 累积完整内容，等待流式传输完成后用打字机效果显示
                                     fullContent += data.chunk;
                                 } else if (data.type === 'done') {
-                                    // 流式传输完成，开始打字机效果
+                                    // 流式传输完成，进度到100%
+                                    updateProgress(100, '解构完成！');
+                                    
                                     // 确保有内容
                                     if (!fullContent.trim()) {
                                         throw new Error('未获取到内容');
@@ -468,20 +583,29 @@
                                     localStorage.setItem('cached_markdown', fullContent);
                                     localStorage.setItem('cached_filename', filename || data.filename);
                                     
-                                    // 更新状态：准备开始打字机效果
-                                    document.getElementById('uploadStatus').innerHTML =
-                                        '<div class="loading-spinner mx-auto mb-4"></div><p class="text-indigo-500">✨ 内容生成完成，正在展示...</p>';
+                                    // 严格顺序：只有当数据完全接收后，才更新状态
+                                    // 更新状态：准备开始打字机效果（但还不显示成功）
+                                    updateProgress(100, '内容生成完成，正在展示...');
                                     
                                     // 清空内容区域，准备打字机效果
                                     contentDiv.innerHTML = '';
                                     
+                                    // 打字机触发：在 typeWriter 函数开始运行后，再移除 hidden
+                                    // 先移除 hidden，让用户看到打字机效果
+                                    resultArea.classList.remove('hidden');
+                                    
                                     // 使用打字机效果显示完整内容
                                     await typeWriter(fullContent, contentDiv, 8);
                                     
+                                    // 打字机完成后，才显示成功状态和按钮
                                     // 绑定下载按钮（确保在打字机完成后绑定）
                                     bindDownload(filename || data.filename);
                                     
-                                    // 更新状态
+                                    // 显示下载和打印按钮
+                                    if (downloadBtn) downloadBtn.style.display = 'block';
+                                    if (printBtn) printBtn.style.display = 'block';
+                                    
+                                    // 严格顺序：只有在打字机完成后，才更新为"解构完成"
                                     document.getElementById('uploadStatus').innerHTML =
                                         '<p class="text-green-600 font-bold">✅ 解构完成！</p><p class="text-sm text-gray-400 mt-2">文件已存入本地，也可点击下方按钮下载</p>';
                                     
@@ -510,6 +634,11 @@
                 document.getElementById('uploadStatus').innerHTML = 
                     `<p class="text-red-500 font-bold">❌ ${errorMessage}</p><p class="text-sm text-gray-400 mt-2">请检查网络连接或稍后重试</p>`;
                 resultArea.classList.add('hidden');
+            } finally {
+                // 恢复上传按钮状态
+                uploadButton.style.pointerEvents = 'auto';
+                uploadButton.style.opacity = '1';
+                uploadButton.style.cursor = originalCursor || 'pointer';
             }
         }
     </script>
